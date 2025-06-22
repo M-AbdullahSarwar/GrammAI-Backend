@@ -5,38 +5,47 @@ require('dotenv').config();
 const connectDB = require('./db');
 const User = require('./models/User');
 const axios = require('axios');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-// env.js
-const isDev = process.env.NODE_ENV !== 'production';
-
-const API_BASE_URL = 'http://192.168.2.5:5000/api'
+// const isDev = process.env.NODE_ENV !== 'production';
+//const API_BASE_URL = 'http://192.168.2.5:5000/api'
 
 // OpenAI API Key from the requirements
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const mongoURI = process.env.MONGO_URI;
-
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-
 connectDB();
 
 
-
-// Helper function to generate simple token
+// Helper function to generate JWT token
 const generateToken = (username) => {
-  return Buffer.from(`${username}:${Date.now()}`).toString('base64');
+  return jwt.sign({ username }, JWT_SECRET, { expiresIn: '1h' });
 };
 
-// Routes
+// Middleware to verify JWT
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, message: 'No token provided' });
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.status(403).json({ success: false, message: 'Invalid or expired token' });
+    req.user = user;
+    next();
+  });
+};
 
-// Health check
+
+// -----------------------------Routes------------------------------
+// For checking purpose
 app.get('/', (req, res) => {
   res.json({ message: 'Grammar Checker API is running!' });
 });
@@ -98,11 +107,10 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Grammar check endpoint
-app.post('/api/grammar/check', async (req, res) => {
+// Grammar check endpoint 
+app.post('/api/grammar/check', authenticateToken, async (req, res) => {
   try {
     const { text } = req.body;
-
     if (!text || !text.trim()) {
       return res.status(400).json({
         success: false,
@@ -167,22 +175,20 @@ app.post('/api/grammar/check', async (req, res) => {
       errors: aiResponse.errors || [],
       originalText: text
     });
-
   } catch (error) {
     console.error('Grammar check error:', error);
-    
     if (error.response && error.response.status === 401) {
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         message: 'OpenAI API authentication failed'
       });
     } else if (error.response && error.response.status === 429) {
-      res.status(429).json({
+      return res.status(429).json({
         success: false,
         message: 'Rate limit exceeded. Please try again later.'
       });
     } else {
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         message: 'Failed to check grammar. Please try again.'
       });
@@ -190,9 +196,8 @@ app.post('/api/grammar/check', async (req, res) => {
   }
 });
 
-// Logout endpoint (optional - mainly for token invalidation in real apps)
+// Logout endpoint 
 app.post('/api/auth/logout', (req, res) => {
-  // In a real app, you'd invalidate the token here
   res.json({
     success: true,
     message: 'Logged out successfully'
